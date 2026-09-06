@@ -3,6 +3,7 @@ Dashboard Sederhana - E-Commerce Public Dataset (Olist Brazil)
 Menjalankan: streamlit run dashboard.py
 """
 
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,12 +12,18 @@ import streamlit as st
 
 sns.set_theme(style="whitegrid")
 
+# Path data selalu mengikuti lokasi file dashboard.py ini,
+# supaya tetap ketemu file-nya baik dijalankan dari folder dashboard/
+# maupun dari root repository (seperti di Streamlit Cloud).
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(BASE_DIR, "main_data.csv")
+
 # ------------------------------------------------------------------
 # Load data
 # ------------------------------------------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("main_data.csv")
+    df = pd.read_csv(DATA_PATH)
     date_cols = ["order_purchase_timestamp", "order_delivered_customer_date",
                  "order_estimated_delivery_date"]
     for col in date_cols:
