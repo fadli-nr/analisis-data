@@ -1,1 +1,1 @@
-https://[ganti-dengan-url-streamlit-cloud-anda].streamlit.app
+https://ksn8wgz8xxeujdopsqpa5m.streamlit.app/
