@@ -12,11 +12,20 @@ import streamlit as st
 
 sns.set_theme(style="whitegrid")
 
+# Palet warna konsisten: abu-abu netral untuk nilai biasa,
+# warna aksen dipakai HANYA untuk menyorot nilai tertinggi/terendah/penting
+# (warna sebagai penunjuk informasi, bukan sekadar dekorasi).
+COLOR_NEUTRAL = "#b0b0b0"
+COLOR_HIGH = "#2a9d8f"
+COLOR_LOW = "#e76f51"
+COLOR_HIGHLIGHT = "#264653"
+
 # Path data selalu mengikuti lokasi file dashboard.py ini,
 # supaya tetap ketemu file-nya baik dijalankan dari folder dashboard/
 # maupun dari root repository (seperti di Streamlit Cloud).
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(BASE_DIR, "main_data.csv")
+
 
 # ------------------------------------------------------------------
 # Load data
@@ -24,14 +33,15 @@ DATA_PATH = os.path.join(BASE_DIR, "main_data.csv")
 @st.cache_data
 def load_data():
     df = pd.read_csv(DATA_PATH)
-    date_cols = ["order_purchase_timestamp"]
-    for col in date_cols:
-        df[col] = pd.to_datetime(df[col])
+    df["order_purchase_timestamp"] = pd.to_datetime(df["order_purchase_timestamp"])
     return df
 
 
 main_df = load_data()
-delivered_df = main_df[main_df["order_status"] == "delivered"].copy()
+delivered_items = main_df[main_df["order_status"] == "delivered"].copy()
+# level order (1 baris = 1 order) -> dipakai untuk waktu pengiriman, review score, dan RFM
+# agar order dengan banyak item tidak dihitung berulang kali.
+delivered_orders = delivered_items.drop_duplicates(subset="order_id").copy()
 
 # ------------------------------------------------------------------
 # Sidebar - filter
@@ -39,8 +49,8 @@ delivered_df = main_df[main_df["order_status"] == "delivered"].copy()
 st.sidebar.title("E-Commerce Dashboard")
 st.sidebar.markdown("Filter data untuk eksplorasi lebih lanjut.")
 
-min_date = delivered_df["order_purchase_timestamp"].min().date()
-max_date = delivered_df["order_purchase_timestamp"].max().date()
+min_date = delivered_orders["order_purchase_timestamp"].min().date()
+max_date = delivered_orders["order_purchase_timestamp"].max().date()
 
 date_range = st.sidebar.date_input(
     "Rentang tanggal pembelian",
@@ -49,7 +59,7 @@ date_range = st.sidebar.date_input(
     max_value=max_date,
 )
 
-state_options = sorted(delivered_df["customer_state"].dropna().unique())
+state_options = sorted(delivered_orders["customer_state"].dropna().unique())
 selected_states = st.sidebar.multiselect(
     "Provinsi (state) pelanggan", options=state_options, default=state_options
 )
@@ -59,12 +69,14 @@ if len(date_range) == 2:
 else:
     start_date, end_date = min_date, max_date
 
-mask = (
-    (delivered_df["order_purchase_timestamp"].dt.date >= start_date)
-    & (delivered_df["order_purchase_timestamp"].dt.date <= end_date)
-    & (delivered_df["customer_state"].isin(selected_states))
+order_mask = (
+    (delivered_orders["order_purchase_timestamp"].dt.date >= start_date)
+    & (delivered_orders["order_purchase_timestamp"].dt.date <= end_date)
+    & (delivered_orders["customer_state"].isin(selected_states))
 )
-filtered_df = delivered_df[mask]
+filtered_orders = delivered_orders[order_mask]
+filtered_order_ids = set(filtered_orders["order_id"])
+filtered_items = delivered_items[delivered_items["order_id"].isin(filtered_order_ids)]
 
 # ------------------------------------------------------------------
 # Header & KPI
@@ -77,10 +89,10 @@ st.markdown(
 )
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Jumlah Order", f"{filtered_df['order_id'].nunique():,}")
-col2.metric("Total Revenue (BRL)", f"{filtered_df['price'].sum():,.0f}")
-col3.metric("Rata-rata Waktu Kirim (hari)", f"{filtered_df['delivery_time_days'].mean():.1f}")
-col4.metric("Rata-rata Review Score", f"{filtered_df['review_score'].mean():.2f}")
+col1.metric("Jumlah Order", f"{filtered_orders['order_id'].nunique():,}")
+col2.metric("Total Revenue (BRL)", f"{filtered_items['price'].sum():,.0f}")
+col3.metric("Rata-rata Waktu Kirim (hari)", f"{filtered_orders['delivery_time_days'].mean():.1f}")
+col4.metric("Rata-rata Review Score", f"{filtered_orders['review_score'].mean():.2f}")
 
 st.divider()
 
@@ -88,9 +100,10 @@ st.divider()
 # Pertanyaan 1: Kategori produk dengan revenue tertinggi & terendah
 # ------------------------------------------------------------------
 st.header("1. Kategori Produk: Revenue Tertinggi & Terendah")
+st.caption("Dihitung pada level item pesanan, karena setiap baris item merepresentasikan satu transaksi penjualan produk.")
 
 category_revenue = (
-    filtered_df.dropna(subset=["product_category_name_english"])
+    filtered_items.dropna(subset=["product_category_name_english"])
     .groupby("product_category_name_english")["price"]
     .sum()
     .sort_values(ascending=False)
@@ -104,17 +117,17 @@ c1, c2 = st.columns(2)
 with c1:
     st.subheader(f"{n_top} Kategori Revenue Tertinggi")
     fig, ax = plt.subplots(figsize=(6, 5))
-    sns.barplot(x=top_cat.values, y=top_cat.index, color="#2a9d8f", ax=ax)
+    colors = [COLOR_HIGH if v == top_cat.max() else COLOR_NEUTRAL for v in top_cat.values]
+    ax.barh(top_cat.index[::-1], top_cat.values[::-1], color=colors[::-1])
     ax.set_xlabel("Total Revenue (BRL)")
-    ax.set_ylabel("")
     st.pyplot(fig)
 
 with c2:
     st.subheader(f"{n_top} Kategori Revenue Terendah")
     fig, ax = plt.subplots(figsize=(6, 5))
-    sns.barplot(x=bottom_cat.values, y=bottom_cat.index, color="#e76f51", ax=ax)
+    colors = [COLOR_LOW if v == bottom_cat.min() else COLOR_NEUTRAL for v in bottom_cat.values]
+    ax.barh(bottom_cat.index[::-1], bottom_cat.values[::-1], color=colors[::-1])
     ax.set_xlabel("Total Revenue (BRL)")
-    ax.set_ylabel("")
     st.pyplot(fig)
 
 st.divider()
@@ -123,9 +136,10 @@ st.divider()
 # Pertanyaan 2: Waktu pengiriman per provinsi vs review score
 # ------------------------------------------------------------------
 st.header("2. Waktu Pengiriman per Provinsi vs Review Score")
+st.caption("Dihitung pada level order (1 baris = 1 order) agar order multi-item tidak terhitung berulang.")
 
 state_summary = (
-    filtered_df.groupby("customer_state")
+    filtered_orders.groupby("customer_state")
     .agg(avg_delivery_days=("delivery_time_days", "mean"),
          avg_review_score=("review_score", "mean"),
          jumlah_order=("order_id", "nunique"))
@@ -137,7 +151,9 @@ with c3:
     st.subheader("10 Provinsi dengan Waktu Pengiriman Terlama")
     fig, ax = plt.subplots(figsize=(6, 5))
     top_state = state_summary.head(10)
-    sns.barplot(x=top_state["avg_delivery_days"], y=top_state.index, color="#e9c46a", ax=ax)
+    colors = [COLOR_LOW if v == top_state["avg_delivery_days"].max() else COLOR_NEUTRAL
+              for v in top_state["avg_delivery_days"].values]
+    ax.barh(top_state.index[::-1], top_state["avg_delivery_days"].values[::-1], color=colors[::-1])
     ax.set_xlabel("Rata-rata Waktu Pengiriman (hari)")
     ax.set_ylabel("Provinsi")
     st.pyplot(fig)
@@ -145,8 +161,9 @@ with c3:
 with c4:
     st.subheader("Korelasi Waktu Pengiriman vs Review Score")
     fig, ax = plt.subplots(figsize=(6, 5))
-    sns.scatterplot(data=state_summary, x="avg_delivery_days", y="avg_review_score",
-                     size="jumlah_order", sizes=(40, 400), legend=False, color="#264653", ax=ax)
+    ax.scatter(state_summary["avg_delivery_days"], state_summary["avg_review_score"],
+               s=state_summary["jumlah_order"] / max(state_summary["jumlah_order"].max(), 1) * 400 + 30,
+               color=COLOR_HIGHLIGHT, alpha=0.7)
     ax.set_xlabel("Rata-rata Waktu Pengiriman (hari)")
     ax.set_ylabel("Rata-rata Review Score")
     st.pyplot(fig)
@@ -162,11 +179,11 @@ st.divider()
 st.header("3. Analisis Lanjutan: Segmentasi Pelanggan (RFM)")
 st.caption(
     "Segmentasi dilakukan dengan manual binning (kuartil) pada Recency, Frequency, "
-    "dan Monetary, tanpa menggunakan algoritma machine learning."
+    "dan Monetary di level order (bukan level item), tanpa menggunakan algoritma machine learning."
 )
 
-snapshot_date = filtered_df["order_purchase_timestamp"].max() + pd.Timedelta(days=1)
-rfm_df = filtered_df.groupby("customer_unique_id").agg(
+snapshot_date = filtered_orders["order_purchase_timestamp"].max() + pd.Timedelta(days=1)
+rfm_df = filtered_orders.groupby("customer_unique_id").agg(
     last_purchase=("order_purchase_timestamp", "max"),
     frequency=("order_id", "nunique"),
     monetary=("payment_value", "sum")
@@ -202,8 +219,9 @@ if len(rfm_df) >= 4:
     c5, c6 = st.columns([1, 1])
     with c5:
         fig, ax = plt.subplots(figsize=(6, 5))
-        sns.barplot(x=segment_summary["jumlah_pelanggan"], y=segment_summary.index,
-                    color="#457b9d", ax=ax)
+        colors = [COLOR_HIGH if s == "Champions" else COLOR_LOW if s == "Hibernating/Lost" else COLOR_NEUTRAL
+                  for s in segment_summary.index]
+        ax.barh(segment_summary.index[::-1], segment_summary["jumlah_pelanggan"].values[::-1], color=colors[::-1])
         ax.set_xlabel("Jumlah Pelanggan")
         ax.set_ylabel("Segmen")
         st.pyplot(fig)
